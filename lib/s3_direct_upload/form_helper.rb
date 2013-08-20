@@ -11,15 +11,20 @@ module S3DirectUpload
 
     class S3Uploader
       def initialize(options)
+        @key_starts_with = options[:key_starts_with] || "uploads/"
         @options = options.reverse_merge(
           aws_access_key_id: S3DirectUpload.config.access_key_id,
           aws_secret_access_key: S3DirectUpload.config.secret_access_key,
           bucket: S3DirectUpload.config.bucket,
           region: S3DirectUpload.config.region || "s3",
+          url: S3DirectUpload.config.url,
+          ssl: true,
           acl: "public-read",
           expiration: 10.hours.from_now.utc.iso8601,
           max_file_size: 500.megabytes,
-          as: "file",
+          callback_method: "POST",
+          callback_param: "file",
+          key_starts_with: @key_starts_with,
           key: key
         )
       end
@@ -32,8 +37,9 @@ module S3DirectUpload
           authenticity_token: false,
           multipart: true,
           data: {
-            post: @options[:post],
-            as: @options[:as]
+            callback_url: @options[:callback_url],
+            callback_method: @options[:callback_method],
+            callback_param: @options[:callback_param]
           }.reverse_merge(@options[:data] || {})
         }
       end
@@ -51,11 +57,11 @@ module S3DirectUpload
       end
 
       def key
-        @key ||= "uploads/#{DateTime.now.utc.strftime("%Y%m%dT%H%MZ")}_#{SecureRandom.hex}/${filename}"
+        @key ||= "#{@key_starts_with}{timestamp}-{unique_id}-#{SecureRandom.hex}/${filename}"
       end
 
       def url
-        "https://#{@options[:region]}.amazonaws.com/#{@options[:bucket]}/"
+        @options[:url] || "http#{@options[:ssl] ? 's' : ''}://#{@options[:region]}.amazonaws.com/#{@options[:bucket]}/"
       end
 
       def policy
@@ -67,14 +73,14 @@ module S3DirectUpload
           expiration: @options[:expiration],
           conditions: [
             ["starts-with", "$utf8", ""],
-            ["starts-with", "$key", ""],
+            ["starts-with", "$key", @options[:key_starts_with]],
             ["starts-with", "$x-requested-with", ""],
             ["content-length-range", 0, @options[:max_file_size]],
-            ["starts-with","$Content-Type",""],
+            ["starts-with","$content-type", @options[:content_type_starts_with] ||""],
             {bucket: @options[:bucket]},
             {acl: @options[:acl]},
             {success_action_status: "201"}
-          ]
+          ] + (@options[:conditions] || [])
         }
       end
 
